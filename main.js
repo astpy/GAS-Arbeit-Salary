@@ -1,5 +1,3 @@
-const sheets_id = 'ID of Spreadsheet';
-const calendar_id = 'ID of Calendar';
 const num_of_row = 200
 
 function main() {
@@ -10,7 +8,7 @@ function main() {
 
   // セル E1 から年を取得
   let sheet = SpreadsheetApp.openById(sheets_id).getSheetByName('設定');
-  const year = sheet.getRange('E1').getValue();
+  const year = sheet.getRange('H1').getValue();
 
   // 設定したの年のシートを参照する or 作成 (例: 2023)
   sheet = set_sheet(year.toString());
@@ -40,7 +38,7 @@ function main() {
       office_names.push(tmp_name);
 
       // セルに代入
-      sheet.getRange(j, 6).setValue(tmp_name);
+      sheet.getRange(j, 9).setValue(tmp_name);
 
       j += 1   
 
@@ -61,19 +59,51 @@ function main() {
     i += 1
   }
 
+  Logger.log(office_ids)
+
   // 給与をバイト先別に計算する
 
+  // 締め日と支給日を取得
+  sheet = SpreadsheetApp.openById(sheets_id).getSheetByName('設定')
+  cutoff_days = []
+  pay_days = []
+  i = 2
+  while(sheet.getRange(i, 1).isBlank() == false){
+
+    cutoff_day = sheet.getRange(i, 3).getValue();
+    cutoff_days.push(cutoff_day);
+    pay_day = sheet.getRange(i, 4, 1, 2).getValues();
+    pay_days.push(pay_day[0]);
+    
+    i += 1
+  
+  }
+
+  // Logger.log(cutoff_days)
+  Logger.log(pay_days);
+
   // 表からバイト先の名称や勤務時間などを 2 次元配列として格納する
+  sheet = SpreadsheetApp.openById(sheets_id).getSheetByName(year.toString());
   let shifts = [];
   i = 2
 
-  // 空白が来るまでシートからアルバイト情報を取得
+  // 空白が来るまでシートからアルバイト先情報を取得
   while(sheet.getRange(i, 1).isBlank() == false){
     shift = sheet.getRange(i, 1, 1, 4).getValues();
     shifts.push(shift[0]);
     i += 1    
   }
   
+  // 月ごとの給与
+  // バイト先の数だけ配列を定義
+  let month_salaries = new Array();
+  for(let i = 0; i < pay_days.length; i++){
+    // 12 ヶ月
+    let month_salary = new Array(12);
+    month_salary.fill(0);
+    month_salaries.push(month_salary);
+  }
+
   // シフトごとに分析
   for(let shift of shifts){
     
@@ -83,14 +113,13 @@ function main() {
     let arbeit_end = shift[2];
     let arbeit_time = shift[3];
 
-    // 出勤および退勤時刻のうち hour のみ
+    // 出勤および退勤時刻のうち hour のみと month のみ
     arbeit_start_hour = arbeit_start.getHours();
     arbeit_end_hour = arbeit_end.getHours();
+    arbeit_start_month = arbeit_start.getMonth();
 
     // 時間外労働時間
     let overtime = 0;
-
-    // Logger.log(arbeit_start instanceof Date);
 
     // 給与計算
 
@@ -106,8 +135,14 @@ function main() {
     sheet = SpreadsheetApp.openById(sheets_id).getSheetByName('設定')
     let hourly_wage = sheet.getRange(office_ids[arbeit_name] + 2, 2).getValue();
 
-    // 給与の加算
-    salaries[office_ids[arbeit_name]][2] += hourly_wage * (arbeit_time + night_shift_time * 0.25 + overtime * 0.25);
+    // 給与の計算
+    salary = hourly_wage * (arbeit_time + night_shift_time * 0.25 + overtime * 0.25);
+
+    // 月間での給与計算
+    month_salaries[office_ids[arbeit_name]][arbeit_start_month] += salary;
+
+    // 年間給与の加算
+    salaries[office_ids[arbeit_name]][2] += salary;
 
     // Logger.log("勤務先: %s, 勤務時間: %s, 時給: %s, 深夜勤務: %s, 時間外勤務: %s", arbeit_name, arbeit_time, hourly_wage, night_shift_time, overtime);
 
@@ -116,19 +151,31 @@ function main() {
 
   }
 
-  // Logger.log(salaries);
-
   // 選択した年のシートを参照
   sheet = SpreadsheetApp.openById(sheets_id).getSheetByName(year.toString());
+
+  // 月間合計給与
+
+  for(let i = 0; i < 12; i++){
+
+    let sum_month_salary = 0
+
+    for(let j = 0; j < month_salaries.length; j++){
+      sum_month_salary += month_salaries[j][i];
+    }
+
+    sheet.getRange(i + 2, 7).setValue(sum_month_salary);
+
+  }
   
   // 年間合計給与
-  sum_salary = 0
+  let sum_salary = 0
 
   for(let salary of salaries){
     
     // セルに格納
-    sheet.getRange(office_ids[salary[0]] + 2, 7).setValue(salary[1]);
-    sheet.getRange(office_ids[salary[0]] + 2, 8).setValue(salary[2]);
+    sheet.getRange(office_ids[salary[0]] + 2, 10).setValue(salary[1]);
+    sheet.getRange(office_ids[salary[0]] + 2, 11).setValue(salary[2]);
     
     // 年間合計給与を加算
     sum_salary += salary[2];
@@ -136,7 +183,30 @@ function main() {
   }
 
   // セルに格納
-  sheet.getRange('G10').setValue(sum_salary);
+  sheet.getRange('J10').setValue(sum_salary);
+
+  // Calendar に入れる
+
+  // Calendar "バイト" を開く
+  let calendar = CalendarApp.getCalendarById(calendar_id);
+
+  let start_date_for_calendar = new Date();
+
+  for(let i = 0; i < month_salaries.length; i++){
+    for(let j = 0; j < 12; j++){
+      if(j == 11){
+        start_date_for_calendar = new Date(year + 1, 0, pay_days[i][1])
+      }else{
+        start_date_for_calendar = new Date(year, j + 1, pay_days[i][1])
+      }
+      
+      title = '給料日: ' + month_salaries[i][j] + '(' + office_names[i] + ')';
+
+      Logger.log(title);
+
+      // calendar.createAllDayEvent(title, start_date_for_calendar);
+    }
+  }
 
 }
 
@@ -175,10 +245,16 @@ function init(sheet){
   sheet.getRange('B1').setValue('開始');
   sheet.getRange('C1').setValue('終了');
   sheet.getRange('D1').setValue('時間');
-  sheet.getRange('F1').setValue('名称');
-  sheet.getRange('G1').setValue('合計時間');
-  sheet.getRange('H1').setValue('合計給与');
-  sheet.getRange('F10').setValue('年間合計収入');
+  sheet.getRange('F1').setValue('月');
+  sheet.getRange('G1').setValue('月給')
+  sheet.getRange('I1').setValue('名称');
+  sheet.getRange('J1').setValue('合計時間');
+  sheet.getRange('K1').setValue('合計給与');
+  sheet.getRange('I10').setValue('年間合計収入');
+
+  for(let i = 1; i <= 12; i++){
+    sheet.getRange(i + 1, 6).setValue(i);
+  }
 
 }
 
